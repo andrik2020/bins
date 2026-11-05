@@ -58,7 +58,8 @@ h2{font-size:14px;margin:18px 0 4px;color:var(--mut)}
 </div>
 
 <div id="p3" class="hide">
-  <textarea id="tx" rows="5" placeholder="Встав сюди список замовлень на сьогодні (адреса, час, телефон). Кожне замовлення з нового рядка."></textarea>
+  <textarea id="tx" rows="5" placeholder="Встав сюди повідомлення «Список на сьогодні» з бота (можна всі одразу)"></textarea>
+  <input id="city3" placeholder="Місто для пошуку адрес, напр.: Львів">
   <div class="acts"><button class="btn g" id="tparse">Розібрати список</button><button class="btn" id="tclear">Очистити</button></div>
   <h2 id="tcnt"></h2>
   <div id="tlink"></div>
@@ -80,7 +81,7 @@ function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;
 function dist(a,b,c,d){var R=6371000,r=Math.PI/180,x=(c-a)*r,y=(d-b)*r,h=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a*r)*Math.cos(c*r)*Math.sin(y/2)*Math.sin(y/2);return 2*R*Math.asin(Math.sqrt(h))}
 function fmt(m){return m<1000?Math.round(m)+" м":(m/1000).toFixed(1)+" км"}
 function route(lat,lng){return"https://www.google.com/maps/dir/?api=1&destination="+lat+","+lng}
-function load(){bins=rd("bins_v1",[]);clients=rd("clients_v1",[]);city=rd("city_v1","");$("city").value=city}
+function load(){bins=rd("bins_v1",[]);clients=rd("clients_v1",[]);city=rd("city_v1",null);if(city===null){city="Львів";wr("city_v1",city)}$("city").value=city;$("city3").value=city}
 function tab(n){for(var i=1;i<=3;i++){$("p"+i).classList.toggle("hide",n!==i);$("t"+i).classList.toggle("on",n===i)}msg("");if(n===3)renderToday()}
 $("t1").onclick=function(){tab(1)};$("t2").onclick=function(){tab(2)};$("t3").onclick=function(){tab(3)};
 
@@ -97,7 +98,7 @@ function renderBins(){var it=sorted();
 function cardC(c){
   if(editId===c.id)return'<div class="card near"><input id="e_addr" value="'+esc(c.addr)+'" placeholder="Адреса"><input id="e_phone" type="tel" value="'+esc(c.phone||"")+'" placeholder="Телефон"><textarea id="e_desc" rows="3" placeholder="Опис: побажання, код, поверх…">'+esc(c.desc||"")+'</textarea><div class="acts"><button class="btn g" data-csave="'+c.id+'">Зберегти</button><button class="btn" data-cpin="'+c.id+'">📍 Мітку сюди</button><button class="btn" data-ccancel="1">Скасувати</button></div></div>';
   var has=c.lat!==undefined,dest=has?route(c.lat,c.lng):"https://www.google.com/maps/dir/?api=1&destination="+encodeURIComponent(c.addr+(city?", "+city:""));
-  var tel=(c.phone||"").replace(/[^\d+]/g,""),d=(has&&pos)?" · "+fmt(dist(pos.lat,pos.lng,c.lat,c.lng)):"";
+  var tel=telNorm(c.phone),d=(has&&pos)?" · "+fmt(dist(pos.lat,pos.lng,c.lat,c.lng)):"";
   return'<div class="card"><div class="d">'+esc(c.addr)+'</div><div class="n">'+(has?'📍 мітка є':'без мітки')+d+'</div>'+(c.phone?'<div class="n">📞 '+esc(c.phone)+'</div>':'')+(c.desc?'<div class="n">'+esc(c.desc)+'</div>':'')+
   '<div class="acts"><a class="btn g" target="_blank" rel="noopener" href="'+dest+'">Маршрут</a>'+(tel?'<a class="btn" href="tel:'+tel+'">Подзвонити</a>':'')+
   '<button class="btn" data-ced="'+c.id+'">Редагувати</button><button class="btn r" data-cdel="'+c.id+'">✕</button></div></div>'}
@@ -131,7 +132,8 @@ $("cadd").onclick=function(){var a=$("addr").value.trim();
   clients.push({id:Date.now(),addr:a,phone:"",desc:"",lat:pos.lat,lng:pos.lng,acc:Math.round(pos.acc),t:new Date().toISOString()});
   $("addr").value="";wr("clients_v1",clients);render();msg("✓ Клієнта збережено. Телефон і опис додай через «Редагувати».");if(navigator.vibrate)navigator.vibrate(60)};
 $("q").oninput=renderClients;
-$("city").onchange=function(){city=$("city").value.trim();wr("city_v1",city);renderClients()};
+function setCity(v){city=v.trim();wr("city_v1",city);$("city").value=city;$("city3").value=city;renderClients();renderToday()}
+$("city").onchange=function(){setCity(this.value)};$("city3").onchange=function(){setCity(this.value)};
 
 $("exp").onclick=function(){var t=JSON.stringify({v:2,bins:bins,clients:clients,city:city});
   if(navigator.clipboard){navigator.clipboard.writeText(t).then(function(){msg("Скопійовано. Встав у нотатки як резерв.")},function(){showBox(t)})}else showBox(t)};
@@ -162,7 +164,7 @@ function extract(line){
     o.from=a*60+(+m[2]||0);o.to=b*60+(+m[4]||0);s=s.replace(m[0]," ");break}
   o.addr=s.replace(/^\s*\d{1,3}[.)]\s+/,"").replace(/^[\s\-–—•*,;:|]+|[\s\-–—•*,;:|]+$/g,"").replace(/\s{2,}/g," ");
   return o}
-function parseText(text){
+function parseGeneric(text){
   var blank=/\n\s*\n/.test(text),res=[],cur=null;
   text.split("\n").forEach(function(raw){
     if(!raw.trim()){cur=null;return}
@@ -173,47 +175,81 @@ function parseText(text){
       if(e.phone&&!cur.phone)cur.phone=e.phone;return}
     if(!e.addr)return;
     cur={id:Date.now()+res.length,addr:e.addr,phone:e.phone,desc:"",from:e.from,to:e.to,done:false};res.push(cur)});
-  res.forEach(function(o){var n=norm(o.addr);
-    var c=clients.filter(function(c){var k=norm(c.addr);return k.length>=4&&(n.indexOf(k)>=0||k.indexOf(n)>=0)})[0];
-    if(!c)return;
-    if(c.lat!==undefined){o.lat=c.lat;o.lng=c.lng}
-    if(!o.phone&&c.phone)o.phone=c.phone;
-    if(c.desc)o.desc=(o.desc?o.desc+"\n":"")+c.desc});
   return res}
+function telNorm(p){var d=String(p||"").replace(/\D/g,"");if(d.length===12&&d.indexOf("380")===0)return"+"+d;if(d.length===10&&d[0]==="0")return"+38"+d;return(String(p||"").trim()[0]==="+"?"+":"")+d}
+function emo(s){return String(s).replace(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF\u23F0\uFE0F\u200D]/gu,"").trim()}
+function geoq(a){var q=String(a).replace(/\(.*?\)/g," ").split(/[,\s]\s*(?:кв\.?|квартира|під['’ʼ]?їзд|поверх|секція|код)(?![а-яіїєґ'’])/i)[0].replace(/^[\s\-–—•*,]+|[\s,.]+$/g,"").replace(/\s{2,}/g," ");var m=q.match(/^(.*?\d+[а-яіїєґa-z]?)\s+\d+$/i);return m?m[1]:q}
+function matchClients(res){res.forEach(function(o){var n=norm(o.q||o.addr);if(n.length<4)return;
+  var c=clients.filter(function(c){var k=norm(c.addr);return k.length>=4&&(n.indexOf(k)>=0||k.indexOf(n)>=0)})[0];if(!c)return;
+  if(c.lat!==undefined){o.lat=c.lat;o.lng=c.lng}
+  if(!o.phone&&c.phone)o.phone=c.phone;
+  if(c.desc)o.desc=(o.desc?o.desc+"\n":"")+c.desc})}
+function parseBot(text){
+  var res=[],cur=null,dis="";
+  function fin(){if(!cur)return;var c=cur;cur=null;
+    var t=c.lines.join("\n").replace(/\|\s*⏰[^|\n]*$/,"").trim(),o={id:Date.now()+res.length,addr:"",phone:"",name:"",desc:"",from:c.from,to:c.to,district:c.district,done:false},m;
+    m=t.match(/\|\s*([^|()\n]+?)\s*\(([^)]*)\)\s*$/);
+    if(m){o.name=emo(m[1]);if(m[2].replace(/\D/g,"").length>=9)o.phone=m[2].trim();t=t.slice(0,m.index).trim()}
+    if(c.biz){var ds=[];t.split("|").forEach(function(p){p=p.trim();var e=emo(p);if(!e)return;
+        if(p.indexOf("📍")===0)o.addr=e;else if(p.indexOf("🔑")===0)ds.push("Код: "+e);else ds.push(e)});
+      if(!o.addr&&ds.length)o.addr=ds.shift();o.desc=ds.join("\n")}
+    else{var L=t.split("\n").map(function(x){return x.trim().replace(/^[\-–—•*\s]+/,"")}).filter(Boolean),k=0,i;
+      for(i=0;i<L.length;i++)if(L[i].length<=60&&/\d/.test(L[i])&&!/^(під['’ʼ]?їзд|поверх|кв|код|домофон|вхід|секція|\d+\s*(під|поверх))/i.test(L[i])){k=i;break}
+      o.addr=(L[k]||"").replace(/[,\s]+$/,"");L.splice(k,1);o.desc=L.join("\n")}
+    if(!o.addr)return;o.q=geoq(o.addr);res.push(o)}
+  text.split("\n").forEach(function(raw){var t=raw.trim();if(!t)return;
+    if(/^\d{1,2}:\d{2}$/.test(t)||/^(✅|⬜|☑️|🔔)/.test(t)||/\[\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4}[, ]+\d{1,2}:\d{2}/.test(t))return;
+    if(t.indexOf("🕒")>=0||t.indexOf("🕐")>=0){fin();
+      var m=t.match(/(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})/),h=t.indexOf("|"),f=null,to=null;
+      if(m){f=+m[1]*60+ +m[2];to=+m[3]*60+ +m[4]}
+      cur={lines:[h>=0?t.slice(h+1):""],from:f,to:to,district:dis,biz:t.indexOf("💼")>=0};return}
+    if(/^📍[^|]+$/.test(t)){fin();dis=emo(t);return}
+    if(cur)cur.lines.push(t)});
+  fin();return res}
+function parseText(text){var r=(text.indexOf("🕒")>=0||text.indexOf("🕐")>=0)?parseBot(text):parseGeneric(text);matchClients(r);return r}
 function geocode(){
   var todo=today.orders.filter(function(o){return o.lat===undefined&&!o.nogeo});
   if(!todo.length){saveToday();renderToday();msg("");return}
   if(!city){msg("Для частини адрес нема координат. Вкажи місто внизу вкладки «Клієнти».");return}
-  var o=todo[0],key=norm(o.addr+city),cache=rd("geo_v1",{});
+  var o=todo[0],key=norm((o.q||geoq(o.addr))+city),cache=rd("geo_v1",{});
   function next(t){saveToday();renderToday();setTimeout(geocode,t)}
   if(cache[key]){o.lat=cache[key][0];o.lng=cache[key][1];o.approx=1;next(0);return}
   msg("Шукаю координати адрес: лишилось "+todo.length+"…");
-  fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=ua&accept-language=uk&q="+encodeURIComponent(o.addr+", "+city))
+  fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=ua&accept-language=uk&q="+encodeURIComponent((o.q||geoq(o.addr))+", "+city))
     .then(function(r){return r.json()}).then(function(a){
       if(a&&a[0]){o.lat=+a[0].lat;o.lng=+a[0].lon;o.approx=1;cache[key]=[o.lat,o.lng];wr("geo_v1",cache)}else o.nogeo=1;next(1100)})
     .catch(function(){o.nogeo=1;next(1100)})}
 function tinfo(o){var n=nowMin();if(o.from===null)return{r:1,t:""};
-  if(n<o.from)return{r:2,t:"з "+hm(o.from)+" до "+hm(o.to)};
+  if(o.from-n>15)return{r:2,t:"відкриється о "+hm(o.from)+" (до "+hm(o.to)+")"};
+  if(n<o.from)return{r:1,t:"почнеться о "+hm(o.from)};
   if(n>o.to)return{r:1,t:"прострочено, до "+hm(o.to)};
-  return{r:(o.to-n<=30?0:1),t:"відкрито до "+hm(o.to)}}
-function ostr(o){return o.lat!==undefined?o.lat+","+o.lng:o.addr+(city?", "+city:"")}
+  return{r:(o.to-n<=20?0:1),t:"відкрито до "+hm(o.to)}}
+function ostr(o){return o.lat!==undefined?o.lat+","+o.lng:(o.q||o.addr)+(city?", "+city:"")}
+function chain(av){
+  var out=[],rest=av.slice(),cp=pos?{lat:pos.lat,lng:pos.lng}:null;
+  rest.filter(function(x){return x.i.r===0}).sort(function(a,b){return a.o.to-b.o.to}).forEach(function(x){out.push(x);rest.splice(rest.indexOf(x),1);if(x.o.lat!==undefined)cp={lat:x.o.lat,lng:x.o.lng}});
+  while(rest.length){var best=-1,bd=1e12,j;
+    if(!cp){for(j=0;j<rest.length;j++)if(rest[j].o.lat!==undefined){var f=rest.splice(j,1)[0];out.push(f);cp={lat:f.o.lat,lng:f.o.lng};break}}
+    if(!cp)break;
+    rest.forEach(function(x,j){if(x.o.lat!==undefined){var d=dist(cp.lat,cp.lng,x.o.lat,x.o.lng);if(d<bd){bd=d;best=j}}});
+    if(best<0)break;
+    var x=rest.splice(best,1)[0];out.push(x);cp={lat:x.o.lat,lng:x.o.lng}}
+  return out.concat(rest)}
 function renderToday(){
   var items=today.orders.map(function(o){return{o:o,i:tinfo(o),d:(pos&&o.lat!==undefined)?dist(pos.lat,pos.lng,o.lat,o.lng):null}});
   var act=items.filter(function(x){return!x.o.done}),dn=items.filter(function(x){return x.o.done});
-  act.sort(function(a,b){if(a.i.r!==b.i.r)return a.i.r-b.i.r;
-    if(a.i.r===0&&a.o.to!==b.o.to)return a.o.to-b.o.to;
-    if(a.i.r===2&&a.o.from!==b.o.from)return a.o.from-b.o.from;
-    return(a.d===null?1e12:a.d)-(b.d===null?1e12:b.d)});
-  $("tcnt").textContent=items.length?"Лишилось: "+act.length+" з "+items.length+(pos?" · порядок з урахуванням часу й відстані":""):"";
-  var pts=act.slice(0,9).map(function(x){return ostr(x.o)});
+  var av=chain(act.filter(function(x){return x.i.r<2}));
+  var later=act.filter(function(x){return x.i.r===2}).sort(function(a,b){return a.o.from-b.o.from||(a.d===null?1e12:a.d)-(b.d===null?1e12:b.d)});
+  $("tcnt").textContent=items.length?"Зараз можна: "+av.length+" · пізніше: "+later.length+" · готово: "+dn.length+(pos?" · порядок від найближчого далі по ланцюжку":""):"";
+  var pts=av.slice(0,9).map(function(x){return ostr(x.o)});
   $("tlink").innerHTML=pts.length?'<a class="btn g" style="display:block;text-align:center;margin-top:8px" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(pts[pts.length-1])+(pts.length>1?'&waypoints='+pts.slice(0,-1).map(encodeURIComponent).join("%7C"):'')+'">🧭 Весь маршрут (перші '+pts.length+')</a>':'';
-  function card(x,k){var o=x.o,tel=(o.phone||"").replace(/[^\d+]/g,"");
-    var col=x.i.r===0?'color:var(--dg);font-weight:700':(x.i.r===2?'':'color:var(--ac);font-weight:600');
-    return'<div class="card'+(k===0&&!o.done?' near':'')+(o.done?' dim':'')+'"><div class="d">'+(o.done?'✓ ':(k+1)+'. ')+esc(o.addr)+'</div><div class="n">'+(x.i.t?'<span style="'+col+'">'+x.i.t+'</span> · ':'')+(x.d!==null?fmt(x.d)+(o.approx?' (≈)':''):(o.lat===undefined?'без координат':''))+'</div>'+
-    (o.phone?'<div class="n">📞 '+esc(o.phone)+'</div>':'')+(o.desc?'<div class="n">'+esc(o.desc)+'</div>':'')+
-    '<div class="acts">'+(o.done?'':'<a class="btn g" target="_blank" rel="noopener" href="'+(o.lat!==undefined?route(o.lat,o.lng):'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(ostr(o)))+'">Маршрут</a>')+(tel?'<a class="btn" href="tel:'+tel+'">Подзвонити</a>':'')+
-    '<button class="btn" data-tdone="'+o.id+'">'+(o.done?'Повернути':'✓ Готово')+'</button></div></div>'}
-  $("tlist").innerHTML=act.map(card).join("")+dn.map(card).join("")}
+  function card(x,k,mode){var o=x.o,tel=telNorm(o.phone);
+    var col=x.i.r===0?'color:var(--dg);font-weight:700':(x.i.r===1?'color:var(--ac);font-weight:600':'');
+    return'<div class="card'+(mode===1&&k===0?' near':'')+(mode>1?' dim':'')+'"><div class="d">'+(mode===3?'✓ ':(mode===1?(k+1)+'. ':''))+esc(o.addr)+'</div><div class="n">'+(o.district?esc(o.district)+' · ':'')+(x.i.t?'<span style="'+col+'">'+x.i.t+'</span> · ':'')+(x.d!==null?fmt(x.d)+(o.approx?' (≈)':''):(o.lat===undefined?'без координат':''))+'</div>'+
+    (o.phone||o.name?'<div class="n">'+(o.name?'👤 '+esc(o.name)+' ':'')+(o.phone?'📞 '+esc(o.phone):'')+'</div>':'')+(o.desc?'<div class="n">'+esc(o.desc)+'</div>':'')+
+    '<div class="acts">'+(mode===3?'':'<a class="btn g" target="_blank" rel="noopener" href="'+(o.lat!==undefined?route(o.lat,o.lng):'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(ostr(o)))+'">Маршрут</a>')+(tel?'<a class="btn" href="tel:'+tel+'">Подзвонити</a>':'')+
+    '<button class="btn" data-tdone="'+o.id+'">'+(mode===3?'Повернути':'✓ Готово')+'</button></div></div>'}
+  $("tlist").innerHTML=av.map(function(x,k){return card(x,k,1)}).join("")+(later.length?'<h2>⏳ Пізніше (вікно ще не відкрилось)</h2>'+later.map(function(x){return card(x,0,2)}).join(""):"")+(dn.length?'<h2>Готово</h2>'+dn.map(function(x){return card(x,0,3)}).join(""):"")}
 $("tparse").onclick=function(){var t=$("tx").value.trim();if(!t){msg("Встав список замовлень");return}
   var r=parseText(t);if(!r.length){msg("Не знайшов жодної адреси");return}
   today={date:dkey(),orders:r};saveToday();$("tx").value="";renderToday();msg("Знайдено замовлень: "+r.length);geocode()};
