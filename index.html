@@ -15,7 +15,7 @@ body{margin:0 auto;background:var(--bg);color:var(--tx);font-family:-apple-syste
 #near .t{flex:1;font-size:15px}#near b{font-size:20px;display:block}
 #near a{background:#fff;color:#15803d;font-weight:700;padding:10px 14px;border-radius:10px;text-decoration:none}
 .tabs{display:flex;gap:8px;margin-bottom:10px}
-.tabs button{flex:1;padding:12px;border-radius:12px;border:1px solid var(--bd);background:var(--card);color:var(--tx);font-size:16px;font-weight:600}
+.tabs button{flex:1;padding:12px 4px;border-radius:12px;border:1px solid var(--bd);background:var(--card);color:var(--tx);font-size:14px;font-weight:600}.dim{opacity:.5}
 .tabs button.on{background:var(--tx);color:var(--bg)}
 #add,#cadd{width:100%;padding:20px;font-size:19px;font-weight:700;border:0;border-radius:16px;background:var(--ac);color:#fff}
 #cadd{margin-top:8px}
@@ -39,9 +39,9 @@ h2{font-size:14px;margin:18px 0 4px;color:var(--mut)}
 <body>
 <div class="gps" id="gps">Шукаю GPS…</div>
 <div id="near" class="hide"></div>
-<div class="tabs"><button id="t1" class="on">🗑️ Смітники</button><button id="t2">🏠 Клієнти</button></div>
+<div class="tabs"><button id="t3" class="on">📋 Сьогодні</button><button id="t2">🏠 Клієнти</button><button id="t1">🗑️ Баки</button></div>
 
-<div id="p1">
+<div id="p1" class="hide">
   <button id="add">📍 Смітник тут</button>
   <input id="note" placeholder="Нотатка (необов’язково): за рогом, біля арки…">
   <h2 id="cnt"></h2>
@@ -55,6 +55,14 @@ h2{font-size:14px;margin:18px 0 4px;color:var(--mut)}
   <h2 id="ccnt"></h2>
   <div id="clist"></div>
   <input id="city" placeholder="Місто (лише для клієнтів без мітки), напр.: Київ">
+</div>
+
+<div id="p3" class="hide">
+  <textarea id="tx" rows="5" placeholder="Встав сюди список замовлень на сьогодні (адреса, час, телефон). Кожне замовлення з нового рядка."></textarea>
+  <div class="acts"><button class="btn g" id="tparse">Розібрати список</button><button class="btn" id="tclear">Очистити</button></div>
+  <h2 id="tcnt"></h2>
+  <div id="tlink"></div>
+  <div id="tlist"></div>
 </div>
 
 <div id="msg"></div>
@@ -73,8 +81,8 @@ function dist(a,b,c,d){var R=6371000,r=Math.PI/180,x=(c-a)*r,y=(d-b)*r,h=Math.si
 function fmt(m){return m<1000?Math.round(m)+" м":(m/1000).toFixed(1)+" км"}
 function route(lat,lng){return"https://www.google.com/maps/dir/?api=1&destination="+lat+","+lng}
 function load(){bins=rd("bins_v1",[]);clients=rd("clients_v1",[]);city=rd("city_v1","");$("city").value=city}
-function tab(n){$("p1").classList.toggle("hide",n!==1);$("p2").classList.toggle("hide",n!==2);$("t1").classList.toggle("on",n===1);$("t2").classList.toggle("on",n===2);msg("")}
-$("t1").onclick=function(){tab(1)};$("t2").onclick=function(){tab(2)};
+function tab(n){for(var i=1;i<=3;i++){$("p"+i).classList.toggle("hide",n!==i);$("t"+i).classList.toggle("on",n===i)}msg("");if(n===3)renderToday()}
+$("t1").onclick=function(){tab(1)};$("t2").onclick=function(){tab(2)};$("t3").onclick=function(){tab(3)};
 
 function sorted(){var it=bins.map(function(b){return{b:b,d:pos?dist(pos.lat,pos.lng,b.lat,b.lng):null}});
   if(pos)it.sort(function(x,y){return x.d-y.d});else it.reverse();return it}
@@ -137,13 +145,89 @@ $("imp").onclick=function(){var b=$("box");
     if(o.city&&!city){city=o.city;$("city").value=city;wr("city_v1",city)}
     wr("bins_v1",bins);wr("clients_v1",clients);render();b.classList.add("hide");msg("Імпортовано")}catch(e){msg("Не схоже на дані")}};
 
+var today={date:"",orders:[]};
+function dkey(){var d=new Date();return d.getFullYear()+"-"+(d.getMonth()+1)+"-"+d.getDate()}
+function loadToday(){var t=rd("today_v1",null);today=(t&&t.date===dkey())?t:{date:dkey(),orders:[]}}
+function saveToday(){wr("today_v1",today)}
+function hm(m){return Math.floor(m/60)+":"+("0"+m%60).slice(-2)}
+function nowMin(){var d=new Date();return d.getHours()*60+d.getMinutes()}
+function norm(s){return String(s).toLowerCase().replace(/вулиця|вул\.?|проспект|просп\.?|будинок|буд\./g,"").replace(/[^a-zа-яіїєґ0-9]/g,"")}
+function extract(line){
+  var s=line.replace(/\u00a0/g," "),o={from:null,to:null,phone:""},m,i,a,b;
+  m=s.match(/\+?\d[\d\s()\-]{8,}\d/);
+  if(m&&m[0].replace(/\D/g,"").length>=9){o.phone=m[0].trim();s=s.replace(m[0]," ")}
+  var re=[/(\d{1,2})[:.](\d{2})\s*[-–—]\s*(\d{1,2})[:.](\d{2})/,/з\s*(\d{1,2})(?::(\d{2}))?\s*до\s*(\d{1,2})(?::(\d{2}))?/i,/(?:^|\s)(\d{1,2})()\s*[-–—]\s*(\d{1,2})()(?=[\s,]|$)/];
+  for(i=0;i<3;i++){m=s.match(re[i]);if(!m)continue;
+    a=+m[1];b=+m[3];if(a>24||b>24)continue;if(i===2&&!(a>=6&&b-a>=2))continue;
+    o.from=a*60+(+m[2]||0);o.to=b*60+(+m[4]||0);s=s.replace(m[0]," ");break}
+  o.addr=s.replace(/^\s*\d{1,3}[.)]\s+/,"").replace(/^[\s\-–—•*,;:|]+|[\s\-–—•*,;:|]+$/g,"").replace(/\s{2,}/g," ");
+  return o}
+function parseText(text){
+  var blank=/\n\s*\n/.test(text),res=[],cur=null;
+  text.split("\n").forEach(function(raw){
+    if(!raw.trim()){cur=null;return}
+    var e=extract(raw);
+    if(cur&&(!e.addr||blank)){
+      if(e.addr)cur.desc+=(cur.desc?"\n":"")+e.addr;
+      if(e.from!==null&&cur.from===null){cur.from=e.from;cur.to=e.to}
+      if(e.phone&&!cur.phone)cur.phone=e.phone;return}
+    if(!e.addr)return;
+    cur={id:Date.now()+res.length,addr:e.addr,phone:e.phone,desc:"",from:e.from,to:e.to,done:false};res.push(cur)});
+  res.forEach(function(o){var n=norm(o.addr);
+    var c=clients.filter(function(c){var k=norm(c.addr);return k.length>=4&&(n.indexOf(k)>=0||k.indexOf(n)>=0)})[0];
+    if(!c)return;
+    if(c.lat!==undefined){o.lat=c.lat;o.lng=c.lng}
+    if(!o.phone&&c.phone)o.phone=c.phone;
+    if(c.desc)o.desc=(o.desc?o.desc+"\n":"")+c.desc});
+  return res}
+function geocode(){
+  var todo=today.orders.filter(function(o){return o.lat===undefined&&!o.nogeo});
+  if(!todo.length){saveToday();renderToday();msg("");return}
+  if(!city){msg("Для частини адрес нема координат. Вкажи місто внизу вкладки «Клієнти».");return}
+  var o=todo[0],key=norm(o.addr+city),cache=rd("geo_v1",{});
+  function next(t){saveToday();renderToday();setTimeout(geocode,t)}
+  if(cache[key]){o.lat=cache[key][0];o.lng=cache[key][1];o.approx=1;next(0);return}
+  msg("Шукаю координати адрес: лишилось "+todo.length+"…");
+  fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=ua&accept-language=uk&q="+encodeURIComponent(o.addr+", "+city))
+    .then(function(r){return r.json()}).then(function(a){
+      if(a&&a[0]){o.lat=+a[0].lat;o.lng=+a[0].lon;o.approx=1;cache[key]=[o.lat,o.lng];wr("geo_v1",cache)}else o.nogeo=1;next(1100)})
+    .catch(function(){o.nogeo=1;next(1100)})}
+function tinfo(o){var n=nowMin();if(o.from===null)return{r:1,t:""};
+  if(n<o.from)return{r:2,t:"з "+hm(o.from)+" до "+hm(o.to)};
+  if(n>o.to)return{r:1,t:"прострочено, до "+hm(o.to)};
+  return{r:(o.to-n<=30?0:1),t:"відкрито до "+hm(o.to)}}
+function ostr(o){return o.lat!==undefined?o.lat+","+o.lng:o.addr+(city?", "+city:"")}
+function renderToday(){
+  var items=today.orders.map(function(o){return{o:o,i:tinfo(o),d:(pos&&o.lat!==undefined)?dist(pos.lat,pos.lng,o.lat,o.lng):null}});
+  var act=items.filter(function(x){return!x.o.done}),dn=items.filter(function(x){return x.o.done});
+  act.sort(function(a,b){if(a.i.r!==b.i.r)return a.i.r-b.i.r;
+    if(a.i.r===0&&a.o.to!==b.o.to)return a.o.to-b.o.to;
+    if(a.i.r===2&&a.o.from!==b.o.from)return a.o.from-b.o.from;
+    return(a.d===null?1e12:a.d)-(b.d===null?1e12:b.d)});
+  $("tcnt").textContent=items.length?"Лишилось: "+act.length+" з "+items.length+(pos?" · порядок з урахуванням часу й відстані":""):"";
+  var pts=act.slice(0,9).map(function(x){return ostr(x.o)});
+  $("tlink").innerHTML=pts.length?'<a class="btn g" style="display:block;text-align:center;margin-top:8px" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(pts[pts.length-1])+(pts.length>1?'&waypoints='+pts.slice(0,-1).map(encodeURIComponent).join("%7C"):'')+'">🧭 Весь маршрут (перші '+pts.length+')</a>':'';
+  function card(x,k){var o=x.o,tel=(o.phone||"").replace(/[^\d+]/g,"");
+    var col=x.i.r===0?'color:var(--dg);font-weight:700':(x.i.r===2?'':'color:var(--ac);font-weight:600');
+    return'<div class="card'+(k===0&&!o.done?' near':'')+(o.done?' dim':'')+'"><div class="d">'+(o.done?'✓ ':(k+1)+'. ')+esc(o.addr)+'</div><div class="n">'+(x.i.t?'<span style="'+col+'">'+x.i.t+'</span> · ':'')+(x.d!==null?fmt(x.d)+(o.approx?' (≈)':''):(o.lat===undefined?'без координат':''))+'</div>'+
+    (o.phone?'<div class="n">📞 '+esc(o.phone)+'</div>':'')+(o.desc?'<div class="n">'+esc(o.desc)+'</div>':'')+
+    '<div class="acts">'+(o.done?'':'<a class="btn g" target="_blank" rel="noopener" href="'+(o.lat!==undefined?route(o.lat,o.lng):'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(ostr(o)))+'">Маршрут</a>')+(tel?'<a class="btn" href="tel:'+tel+'">Подзвонити</a>':'')+
+    '<button class="btn" data-tdone="'+o.id+'">'+(o.done?'Повернути':'✓ Готово')+'</button></div></div>'}
+  $("tlist").innerHTML=act.map(card).join("")+dn.map(card).join("")}
+$("tparse").onclick=function(){var t=$("tx").value.trim();if(!t){msg("Встав список замовлень");return}
+  var r=parseText(t);if(!r.length){msg("Не знайшов жодної адреси");return}
+  today={date:dkey(),orders:r};saveToday();$("tx").value="";renderToday();msg("Знайдено замовлень: "+r.length);geocode()};
+$("tclear").onclick=function(){if(!confirm("Очистити список на сьогодні?"))return;today={date:dkey(),orders:[]};saveToday();renderToday();msg("")};
+$("tlist").onclick=function(e){var id=e.target.getAttribute("data-tdone");if(!id)return;
+  today.orders.forEach(function(o){if(String(o.id)===id)o.done=!o.done});saveToday();renderToday()};
+setInterval(function(){if(!$("p3").classList.contains("hide"))renderToday()},60000);
 function watch(){
   if(!navigator.geolocation){$("gps").textContent="Геолокація недоступна";return}
   navigator.geolocation.watchPosition(function(p){pos={lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy};
-    $("gps").textContent="GPS: ±"+Math.round(pos.acc)+" м";renderBins();if(editId===null)renderClients()},
+    $("gps").textContent="GPS: ±"+Math.round(pos.acc)+" м";renderBins();if(editId===null)renderClients();renderToday()},
   function(){$("gps").textContent="GPS не дозволено. Увімкни геолокацію для браузера."},
   {enableHighAccuracy:true,maximumAge:3000,timeout:20000})}
-load();render();watch();
+load();loadToday();render();renderToday();watch();
 </script>
 </body>
 </html>
