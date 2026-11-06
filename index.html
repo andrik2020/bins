@@ -72,15 +72,17 @@ h2{font-size:14px;margin:18px 0 4px;color:var(--mut)}
 </div>
 
 <div id="p4" class="hide">
-  <div class="acts"><button class="btn" id="mme">📍 Я тут</button><button class="btn" id="mall">🔍 Усе</button></div>
+  <div class="acts"><button class="btn" id="mme">📍 Я тут</button><button class="btn" id="mall">🔍 Усе</button><button class="btn" id="medit">✏️ Редагувати</button></div>
   <div id="map"></div>
   <div class="n" id="maplg" style="margin-top:8px"></div>
   <div class="n" id="mapmsg"></div>
 </div>
 
 <div id="msg"></div>
-<h2>Резервна копія</h2>
+<h2 id="bkh">Резервна копія</h2>
 <div class="bk"><button id="exp">Скопіювати дані</button><button id="imp">Вставити дані</button></div>
+<div class="bk"><button id="fexp">💾 Зберегти файлом</button><button id="fimp">📂 З файлу</button></div>
+<input type="file" id="ffile" accept=".json,application/json,text/plain" class="hide">
 <textarea id="box" rows="3" class="hide" placeholder="Встав скопійовані дані сюди, потім ще раз «Вставити дані»"></textarea>
 
 <script>
@@ -303,36 +305,76 @@ function renderNear(){var n=$("near");
     html='<div class="t">Смітник по дорозі до: '+esc(t.addr)+'<b>'+fmt(d1)+' · крюк +'+fmt(det)+(b.note?' · '+esc(b.note):'')+'</b>'+(near!==best?'<a class="sm" target="_blank" rel="noopener" href="'+route(near.lat,near.lng)+'">або найближчий: '+fmt(nd)+'</a>':'')+'</div>'}
   else html='<div class="t">Найближчий смітник<b>'+fmt(d1)+(b.note?' · '+esc(b.note):'')+'</b></div>';
   n.innerHTML=html+'<a target="_blank" rel="noopener" href="'+route(b.lat,b.lng)+'">Поїхати</a>';n.classList.remove("hide")}
-var map=null,mlayer=null,mme=null,mfit=false,popOpen=false,mapAv=[],mapLater=[],chosenBin=null;
+var map=null,mlayer=null,mme=null,mfit=false,popOpen=false,mEdit=false,mapAv=[],mapLater=[],chosenBin=null;
+function savePin(o,lat,lng,acc){o.lat=lat;o.lng=lng;o.approx=0;
+  var a=o.q||o.addr,k=norm(a),c=clients.filter(function(c){return norm(c.addr)===k})[0];
+  if(c){c.lat=lat;c.lng=lng;c.acc=acc;if(o.phone&&!c.phone)c.phone=o.phone}
+  else clients.push({id:Date.now(),addr:a,phone:o.phone||"",desc:"",lat:lat,lng:lng,acc:acc,t:new Date().toISOString()});
+  wr("clients_v1",clients);saveToday()}
+function mm(t){$("mapmsg").textContent=t}
 function initMap(){if(map)return true;
-  if(typeof L==="undefined"){$("mapmsg").textContent="Карта не завантажилась. Потрібен інтернет.";return false}
+  if(typeof L==="undefined"){mm("Карта не завантажилась. Потрібен інтернет.");return false}
   map=L.map("map").setView([pos?pos.lat:49.8397,pos?pos.lng:24.0297],14);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
   mlayer=L.layerGroup().addTo(map);mme=L.layerGroup().addTo(map);
-  map.on("popupopen",function(){popOpen=true});map.on("popupclose",function(){popOpen=false});return true}
+  map.on("popupopen",function(){popOpen=true});map.on("popupclose",function(){popOpen=false});
+  map.on("click",function(e){if(!mEdit)return;
+    var d=document.createElement("div"),b=document.createElement("button");d.innerHTML="<b>Додати смітник тут?</b><br>";
+    b.textContent="➕ Додати";b.className="btn g";b.style.marginTop="6px";
+    b.onclick=function(){bins.push({id:Date.now(),lat:e.latlng.lat,lng:e.latlng.lng,acc:0,note:"",t:new Date().toISOString()});wr("bins_v1",bins);map.closePopup();popOpen=false;render();renderToday();mm("✓ Смітник додано")};
+    d.appendChild(b);L.popup().setLatLng(e.latlng).setContent(d).openOn(map)});
+  return true}
 function pinIcon(t,c){return L.divIcon({className:"",html:'<div class="pin '+c+'">'+t+'</div>',iconSize:[28,28],iconAnchor:[14,14]})}
 function mpop(x){var o=x.o;return'<b>'+esc(o.addr)+'</b><br>'+(x.i.t?esc(x.i.t)+'<br>':'')+(o.name?'👤 '+esc(o.name)+' ':'')+(o.phone?'📞 '+esc(o.phone):'')+(o.desc?'<br>'+esc(o.desc.slice(0,160)).replace(/\n/g,'<br>'):'')+'<br><a target="_blank" rel="noopener" href="'+(o.lat!==undefined?route(o.lat,o.lng):'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(ostr(o)))+'">Маршрут</a>'}
+function binPop(b){var d=document.createElement("div");
+  d.innerHTML='🗑️ '+esc(b.note||"смітник")+'<br><a target="_blank" rel="noopener" href="'+route(b.lat,b.lng)+'">Маршрут</a>';
+  if(mEdit){var x=document.createElement("button");x.className="btn r";x.textContent="✕ Видалити";x.style.marginTop="6px";
+    x.onclick=function(){bins=bins.filter(function(y){return y.id!==b.id});wr("bins_v1",bins);map.closePopup();popOpen=false;render();renderToday();mm("Смітник видалено")};
+    d.appendChild(document.createElement("br"));d.appendChild(x)}
+  return d}
 function mapPts(){var p=[];if(pos)p.push([pos.lat,pos.lng]);
   mapAv.concat(mapLater).forEach(function(x){if(x.o.lat!==undefined)p.push([x.o.lat,x.o.lng])});
   if(p.length<2)bins.forEach(function(b){p.push([b.lat,b.lng])});return p}
 function fitAll(){var p=mapPts();if(!map||!p.length)return;
   if(p.length===1)map.setView(p[0],16);else map.fitBounds(p,{padding:[30,30],maxZoom:16})}
+function ordMarker(x,icon,z){var o=x.o,m=L.marker([o.lat,o.lng],{icon:icon,draggable:mEdit,zIndexOffset:z});
+  m.bindPopup(mpop(x));
+  m.on("dragstart",function(){popOpen=true});
+  m.on("dragend",function(e){var ll=e.target.getLatLng();popOpen=false;savePin(o,ll.lat,ll.lng,0);mm("✓ Точку «"+o.addr+"» виправлено і запам’ятав");renderToday()});
+  m.addTo(mlayer)}
 function renderMap(){if(!map||$("p4").classList.contains("hide"))return;
   mme.clearLayers();
-  if(pos){L.circle([pos.lat,pos.lng],{radius:Math.max(pos.acc,5),color:"#2563eb",weight:1,fillOpacity:.1}).addTo(mme);
-    L.circleMarker([pos.lat,pos.lng],{radius:8,color:"#fff",weight:3,fillColor:"#2563eb",fillOpacity:1}).addTo(mme)}
+  if(pos){L.circle([pos.lat,pos.lng],{radius:Math.max(pos.acc,5),color:"#2563eb",weight:1,fillOpacity:.1,interactive:false}).addTo(mme);
+    L.circleMarker([pos.lat,pos.lng],{radius:8,color:"#fff",weight:3,fillColor:"#2563eb",fillOpacity:1,interactive:false}).addTo(mme)}
   if(popOpen)return;
   mlayer.clearLayers();var nc=0;
   bins.forEach(function(b){var ch=chosenBin&&b.id===chosenBin.id;
-    L.circleMarker([b.lat,b.lng],{radius:ch?9:5,color:ch?"#fff":"#92400e",weight:ch?3:1,fillColor:ch?"#f97316":"#f59e0b",fillOpacity:1})
-      .bindPopup('🗑️ '+esc(b.note||"смітник")+'<br><a target="_blank" rel="noopener" href="'+route(b.lat,b.lng)+'">Маршрут</a>').addTo(mlayer)});
-  mapLater.forEach(function(x){var o=x.o;if(o.lat===undefined){nc++;return}
-    L.marker([o.lat,o.lng],{icon:pinIcon(Math.floor(o.from/60),"l")}).bindPopup(mpop(x)).addTo(mlayer)});
-  mapAv.forEach(function(x,k){var o=x.o;if(o.lat===undefined){nc++;return}
-    L.marker([o.lat,o.lng],{icon:pinIcon(k+1,x.i.r===0?"u":""),zIndexOffset:500}).bindPopup(mpop(x)).addTo(mlayer)});
+    L.circleMarker([b.lat,b.lng],{radius:ch?9:5,color:ch?"#fff":"#92400e",weight:ch?3:1,fillColor:ch?"#f97316":"#f59e0b",fillOpacity:1,bubblingMouseEvents:false})
+      .bindPopup(binPop(b)).addTo(mlayer)});
+  mapLater.forEach(function(x){if(x.o.lat===undefined){nc++;return}ordMarker(x,pinIcon(Math.floor(x.o.from/60),"l"),0)});
+  mapAv.forEach(function(x,k){if(x.o.lat===undefined){nc++;return}ordMarker(x,pinIcon(k+1,x.i.r===0?"u":""),500)});
   $("maplg").textContent="🟢 замовлення (номер = порядок) · 🔴 терміново · ⚪ пізніше (година початку) · 🟠 смітники"+(nc?" · без координат: "+nc:"")}
-$("mme").onclick=function(){if(map&&pos)map.setView([pos.lat,pos.lng],17);else msg("Ще нема GPS")};
+$("mme").onclick=function(){if(map&&pos)map.setView([pos.lat,pos.lng],17);else mm("Ще нема GPS")};
 $("mall").onclick=fitAll;
+$("medit").onclick=function(){mEdit=!mEdit;this.textContent=mEdit?"✏️ Редагування: УВІМК":"✏️ Редагувати";this.classList.toggle("g",mEdit);
+  popOpen=false;if(map)map.closePopup();renderMap();
+  mm(mEdit?"Тягни позначку замовлення, щоб виправити точку. Тапни на порожнє місце, щоб додати смітник. Тапни на смітник, щоб видалити.":"")};
+function importText(txt){try{var o=JSON.parse(txt),nb=Array.isArray(o)?o:(o.bins||[]),nc=o.clients||[],h={},k={},ab=0,ac=0;
+    bins.forEach(function(x){h[x.id]=1});clients.forEach(function(x){k[x.id]=1});
+    nb.forEach(function(x){if(x&&x.lat&&x.lng&&!h[x.id]){bins.push(x);ab++}});
+    nc.forEach(function(x){if(x&&x.addr&&!k[x.id]){clients.push(x);ac++}});
+    if(o.city&&!city)setCity(o.city);
+    wr("bins_v1",bins);wr("clients_v1",clients);render();renderToday();msg("Імпортовано: смітників "+ab+", клієнтів "+ac);return true}
+  catch(e){msg("Не схоже на дані");return false}}
+function bkLabel(){var t=rd("bk_v1",null);$("bkh").textContent="Резервна копія · "+(t?"остання: "+new Date(t).toLocaleDateString("uk-UA"):"ще не робилась")}
+$("fexp").onclick=function(){var t=JSON.stringify({v:2,bins:bins,clients:clients,city:city}),name="bins-"+new Date().toISOString().slice(0,10)+".json";
+  function mark(){wr("bk_v1",new Date().toISOString());bkLabel()}
+  try{var f=new File([t],name,{type:"application/json"});
+    if(navigator.canShare&&navigator.canShare({files:[f]})){navigator.share({files:[f],title:name}).then(function(){mark();msg("✓ Копію збережено")}).catch(function(){});return}}catch(e){}
+  var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([t],{type:"application/json"}));a.download=name;document.body.appendChild(a);a.click();a.remove();mark();msg("Файл завантажено")};
+$("fimp").onclick=function(){$("ffile").click()};
+$("ffile").onchange=function(){var f=this.files&&this.files[0];if(!f)return;var r=new FileReader();r.onload=function(){importText(String(r.result))};r.readAsText(f);this.value=""};
+bkLabel();
 function watch(){
   if(!navigator.geolocation){$("gps").textContent="Геолокація недоступна";return}
   navigator.geolocation.watchPosition(function(p){pos={lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy};
